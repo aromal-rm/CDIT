@@ -37,7 +37,7 @@ def detect_seals(image_path):
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     print(f"[DEBUG] Total contours found: {len(contours)}")
 
-    # Step 5: Filter Based on Area and Circularity
+    # Step 5: Filter Contours Based on Area and Circularity
     seal_candidates = []
     min_area = (height * width) * 0.005  # Minimum area as a percentage of cropped size
     max_area = (height * width) * 0.5   # Maximum area to exclude very large objects
@@ -49,30 +49,49 @@ def detect_seals(image_path):
         print(f"[DEBUG] Contour {i}: Area={area:.2f}, Perimeter={perimeter:.2f}")
         
         if area < min_area or area > max_area:  # Filter by area
-            print(f"[INFO] Contour {i} rejected (area outside threshold).")
             continue
 
         # Circularity Check
         circularity = 4 * np.pi * (area / (perimeter * perimeter)) if perimeter > 0 else 0
-        print(f"[DEBUG] Contour {i}: Circularity={circularity:.2f}")
         if 0.6 <= circularity <= 1.2:  # Accept imperfect circular shapes
-            print(f"[INFO] Contour {i} accepted as a seal candidate.")
             seal_candidates.append(contour)
-        else:
-            print(f"[INFO] Contour {i} rejected (circularity outside threshold).")
 
     print(f"[DEBUG] Total valid seal candidates: {len(seal_candidates)}")
 
-    # Step 6: Draw Detected Seals
-    print("[INFO] Drawing detected seals...")
+    # Step 6: Hough Circle Transform
+    print("[INFO] Running Hough Circle Transform...")
+    circles = cv2.HoughCircles(
+        gray, 
+        cv2.HOUGH_GRADIENT, 
+        dp=1.2, 
+        minDist=30,
+        param1=50, 
+        param2=30, 
+        minRadius=20, 
+        maxRadius=150
+    )
+
     result_image = cropped_image.copy()
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        for i in circles[0, :]:
+            center = (i[0], i[1])  # Circle center
+            radius = i[2]          # Circle radius
+            cv2.circle(result_image, center, radius, (255, 0, 0), 2)  # Draw circle
+            cv2.circle(result_image, center, 2, (0, 255, 0), 3)       # Draw center
+        print(f"[INFO] HoughCircles detected {len(circles[0])} circles.")
+    else:
+        print("[INFO] No circles detected by Hough Circle Transform.")
+
+    # Step 7: Draw Detected Contours and Seals
+    print("[INFO] Drawing detected seals...")
     for contour in seal_candidates:
         cv2.drawContours(result_image, [contour], -1, (0, 255, 0), 2)
 
     # Display results
     print("[INFO] Displaying and saving result image...")
-    cv2.imshow('Detected Seals', result_image)
-    cv2.imwrite('detected_seals_filtered_debug.png', result_image)
+    cv2.imshow('Detected Seals with Hough Circles', result_image)
+    cv2.imwrite('detected_seals_combined.png', result_image)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
