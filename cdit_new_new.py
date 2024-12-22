@@ -109,5 +109,5 @@ def detect_seals(image_path, output_path="final_seal_detection_result.png"):
 
 # Entry point
 if __name__ == "__main__":
-    image_path = "med_cert_5.jpg"  # Replace with your input image path
+    image_path = "med_cert_6.png"  # Replace with your input image path
     detect_seals(image_path)
