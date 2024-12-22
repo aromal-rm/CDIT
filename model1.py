@@ -29,11 +29,11 @@ def preprocess_image(img_path):
     return output
 
 # Test preprocessing on an example
-img_path = 'image.png'  # Change to your image path
-preprocessed_img = preprocess_image(img_path)
-plt.imshow(cv2.cvtColor(preprocessed_img, cv2.COLOR_BGR2RGB))
-plt.title("Preprocessed Image - Contours Detected")
-plt.show()
+# img_path = 'image.png'  # Change to your image path
+# preprocessed_img = preprocess_image(img_path)
+# plt.imshow(cv2.cvtColor(preprocessed_img, cv2.COLOR_BGR2RGB))
+# plt.title("Preprocessed Image - Contours Detected")
+# plt.show()
 
 # -----------------------
 # STEP 2: Dataset Preparation
@@ -106,4 +106,4 @@ def predict_seal(img_path):
         print("No Seal Detected")
 
 # Test prediction
-predict_seal(img_path)
+# predict_seal(img_path)

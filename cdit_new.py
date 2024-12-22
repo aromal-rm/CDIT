@@ -77,4 +77,4 @@ def detect_seals(image_path):
     cv2.destroyAllWindows()
 
 
-detect_seals('med_cert_4.jpg')
+detect_seals('med_cert_6.png')
