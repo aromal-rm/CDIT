@@ -54,7 +54,8 @@ model.summary()
 # -----------------------
 # Training the Model
 # -----------------------
-history = model.fit(train_data, validation_data=validation_data, epochs=10)
+history = model.fit(train_data, validation_data=validation_data, epochs=20)
+model.save('CDIT.h5')
 
 # -----------------------
 # Testing on New Images (Commented)
