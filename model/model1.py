@@ -58,7 +58,7 @@ history = model.fit(train_data, validation_data=validation_data, epochs=20)
 model.save('CDIT.h5')
 
 # -----------------------
-# Testing on New Images (Commented)
+# # Testing on New Images (Commented)
 # -----------------------
 # def predict_acceptance(img_path):
 #     img = cv2.imread(img_path)
