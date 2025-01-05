@@ -1,121 +1,181 @@
-import os
+import cv2
 import numpy as np
-from keras.models import Sequential
-from keras.layers import Cropping2D, Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-
-from keras.optimizers import Adam
-from sklearn.model_selection import train_test_split
-import shutil
 import tensorflow as tf
-from pathlib import Path
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import os
+import matplotlib.pyplot as plt
 
-# === Step 1: Preprocessing ===
-# Set paths for data directories
-original_data_dir = "data"  # Replace with your dataset directory
-base_dir = "data_preprocessed"  # New base directory for preprocessed data
+# -----------------------
+# Preprocessing Function
+# -----------------------
+def preprocess_image(img):
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Apply Gaussian Blur for denoising
+    denoised = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Threshold to create a binary image
+    _, binary = cv2.threshold(denoised, 128, 255, cv2.THRESH_BINARY)
+    
+    # Find the largest contour for deskewing
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        largest_contour = max(contours, key=cv2.contourArea)
+        rect = cv2.minAreaRect(largest_contour)
+        box = cv2.boxPoints(rect)
+        box = np.int64(box)
+        angle = rect[-1]
+        if angle < -45:
+            angle += 90
+        (h, w) = gray.shape[:2]
+        rotation_matrix = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
+        deskewed = cv2.warpAffine(gray, rotation_matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    else:
+        deskewed = gray  # Use original if no contours are found
 
-# Create directories for training and validation datasets
-if not os.path.exists(base_dir):
-    os.makedirs(base_dir)
-train_dir = os.path.join(base_dir, "train")
-val_dir = os.path.join(base_dir, "val")
+    # Crop to the bottom part of the image (assume bottom 40%)
+    h, w = deskewed.shape
+    cropped = deskewed[int(h * 0.6):, :]
 
-for subdir in ["accepting", "not_accepting"]:
-    os.makedirs(os.path.join(train_dir, subdir), exist_ok=True)
-    os.makedirs(os.path.join(val_dir, subdir), exist_ok=True)
+    # Resize to target size for model input
+    resized = cv2.resize(cropped, (128, 128))
 
-# Split the dataset into training and validation sets
-for label in ["accepting", "not_accepting"]:
-    src_dir = os.path.join(original_data_dir, label)
-    all_files = os.listdir(src_dir)
-    train_files, val_files = train_test_split(all_files, test_size=0.2, random_state=42)
+    # Normalize pixel values
+    normalized = resized / 255.0
 
-    for file in train_files:
-        shutil.copy(os.path.join(src_dir, file), os.path.join(train_dir, label, file))
+    # Return preprocessed image
+    return normalized
 
-    for file in val_files:
-        shutil.copy(os.path.join(src_dir, file), os.path.join(val_dir, label, file))
+# -----------------------
+# Dataset Preparation
+# -----------------------
+def preprocess_directory(input_dir, output_dir):
+    """Preprocess images in a directory and save to a new directory."""
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    for root, dirs, files in os.walk(input_dir):
+        for file in files:
+            img_path = os.path.join(root, file)
+            img = cv2.imread(img_path)
+            preprocessed_img = preprocess_image(img)
+            save_path = os.path.join(output_dir, file)
+            cv2.imwrite(save_path, (preprocessed_img * 255).astype(np.uint8))
 
-print("Preprocessing complete and saved to 'data_preprocessed'.")
+# Preprocess training and validation datasets
+preprocess_directory('data/train', 'data/train_preprocessed')
+preprocess_directory('data/validation', 'data/validation_preprocessed')
 
-# === Step 2: Data Generators ===
-# Training data generator
-train_datagen = ImageDataGenerator(rescale=1.0 / 255)
-train_data = train_datagen.flow_from_directory(
+train_dir = 'data/train'
+validation_dir = 'data/validation'
+
+# Load the datasets using image_dataset_from_directory
+train_data = tf.keras.utils.image_dataset_from_directory(
     train_dir,
-    target_size=(128, 128),
+    image_size=(128, 128),  # Resize all images to 128x128
     batch_size=32,
-    class_mode="binary",
-    color_mode="grayscale",  # Convert to grayscale
+    label_mode='binary'  # Use binary for two classes
 )
 
-# Validation data generator
-val_datagen = ImageDataGenerator(rescale=1.0 / 255)
-val_data = val_datagen.flow_from_directory(
-    val_dir,
-    target_size=(128, 128),
+validation_data = tf.keras.utils.image_dataset_from_directory(
+    validation_dir,
+    image_size=(128, 128),  # Resize all images to 128x128
     batch_size=32,
-    class_mode="binary",
-    color_mode="grayscale",  # Convert to grayscale
+    label_mode='binary'  # Use binary for two classes
 )
 
-# === Step 3: Model Definition ===
+# Normalize pixel values (0-255) to (0-1)
+normalization_layer = tf.keras.layers.Rescaling(1.0 / 255)
+train_data = train_data.map(lambda x, y: (normalization_layer(x), y))
+validation_data = validation_data.map(lambda x, y: (normalization_layer(x), y))
+
+# Create a simple CNN model
 model = Sequential([
-    Cropping2D(((20, 20), (0, 0)), input_shape=(128, 128, 1)),  # Grayscale input
-    Conv2D(32, (3, 3), activation="relu"),
-    MaxPooling2D(pool_size=(2, 2)),
-    Conv2D(64, (3, 3), activation="relu"),
-    MaxPooling2D(pool_size=(2, 2)),
-    Conv2D(128, (3, 3), activation="relu"),
-    MaxPooling2D(pool_size=(2, 2)),
+    Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 3)),
+    MaxPooling2D((2, 2)),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
     Flatten(),
-    Dense(128, activation="relu"),
+    Dense(128, activation='relu'),
     Dropout(0.5),
-    Dense(1, activation="sigmoid"),  # Binary classification
+    Dense(1, activation='sigmoid')  # Binary classification
 ])
 
 # Compile the model
 model.compile(
-    optimizer=Adam(learning_rate=0.001),
-    loss="binary_crossentropy",
-    metrics=["accuracy"],
+    optimizer='adam',
+    loss='binary_crossentropy',
+    metrics=['accuracy']
 )
 
-# === Step 4: Model Training ===
+# Print the model summary
+model.summary()
+
+# Train the model
 history = model.fit(
     train_data,
-    steps_per_epoch=train_data.samples // train_data.batch_size,
-    epochs=10,  # Adjust epochs as needed
-    validation_data=val_data,
-    validation_steps=val_data.samples // val_data.batch_size,
+    validation_data=validation_data,
+    epochs=20
 )
 
-# Save the model
-model.save("model_grayscale.h5")
+# Save the trained model
+model.save('seal_detection_model.h5')
 
-# === Step 5: Model Evaluation ===
-loss, accuracy = model.evaluate(val_data)
-print(f"Validation Loss: {loss}")
-print(f"Validation Accuracy: {accuracy}")
+# -----------------------
+# Plot Training and Validation Graphs
+# -----------------------
+def plot_training_history(history):
+    """Plot training and validation accuracy and loss."""
+    # Extract accuracy and loss
+    acc = history.history['accuracy']
+    val_acc = history.history['val_accuracy']
+    loss = history.history['loss']
+    val_loss = history.history['val_loss']
 
-# === Step 6: Visualizing Training Results (Optional) ===
-import matplotlib.pyplot as plt
+    # Create epochs range
+    epochs_range = range(len(acc))
 
-# Plot accuracy
-plt.plot(history.history["accuracy"], label="Training Accuracy")
-plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
-plt.legend()
-plt.title("Training and Validation Accuracy")
-plt.xlabel("Epochs")
-plt.ylabel("Accuracy")
-plt.show()
+    # Plot accuracy
+    plt.figure(figsize=(12, 6))
 
-# Plot loss
-plt.plot(history.history["loss"], label="Training Loss")
-plt.plot(history.history["val_loss"], label="Validation Loss")
-plt.legend()
-plt.title("Training and Validation Loss")
-plt.xlabel("Epochs")
-plt.ylabel("Loss")
-plt.show()
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs_range, acc, label='Training Accuracy')
+    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation Accuracy')
+
+    # Plot loss
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, loss, label='Training Loss')
+    plt.plot(epochs_range, val_loss, label='Validation Loss')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation Loss')
+
+    # Show plots
+    plt.show()
+
+# Call the function to plot graphs after training
+plot_training_history(history)
+
+# -----------------------
+# Testing on New Images
+# -----------------------
+def predict_acceptance(img_path):
+    img = cv2.imread(img_path)
+    preprocessed_img = preprocess_image(img)
+    preprocessed_img = np.expand_dims(preprocessed_img, axis=-1)  # Add channel dimension
+    preprocessed_img = np.expand_dims(preprocessed_img, axis=0)  # Add batch dimension
+
+    prediction = model.predict(preprocessed_img)
+    if prediction[0][0] > 0.5:
+        print("Certificate Accepted")
+    else:
+        print("Certificate Not Accepted")
+
+# Test the model
+# img_path = 'path/to/test/image.png'
+# predict_acceptance(img_path)
