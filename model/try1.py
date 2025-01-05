@@ -119,7 +119,7 @@ model.summary()
 history = model.fit(
     train_data,
     validation_data=validation_data,
-    epochs=20
+    epochs=60
 )
 
 # Save the trained model
