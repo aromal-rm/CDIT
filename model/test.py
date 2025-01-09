@@ -4,7 +4,7 @@ from tensorflow.keras.preprocessing.image import load_img, img_to_array
 import numpy as np
 
 # --- Step 1: Load the Model ---
-model = load_model('binary_classification_model.h5')
+model = load_model('tr2.h5')
 print("Model loaded successfully.")
 
 # --- Step 2: Helper Functions ---
