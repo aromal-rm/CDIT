@@ -4,7 +4,7 @@ from tensorflow.keras.preprocessing.image import load_img, img_to_array
 import numpy as np
 
 # --- Step 1: Load the Model ---
-model = load_model('tr2.h5')
+model = load_model('try2.h5')
 print("Model loaded successfully.")
 
 # --- Step 2: Helper Functions ---
@@ -39,7 +39,7 @@ def predict_images_in_directory(directory_path):
 # --- Step 3: Test the Model ---
 
 # Option 1: Test a single image
-single_image_path = 'D:\College\CDIT\model\data\\validation\\not_accepting\\namc2_page-0029.jpg'  # Replace with your image path
+single_image_path = '/Users/arjun/Documents/CDIT/confidential/med_cert_6.png'  # Replace with your image path
 single_prediction = predict_single_image(single_image_path)
 if single_prediction > 0.5:
     print(f"The image '{os.path.basename(single_image_path)}' belongs to Class 1 (positive).")

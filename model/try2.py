@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, models, callbacks
+from tensorflow.keras import layers, models, callbacks # type: ignore
 from sklearn.model_selection import KFold
 from sklearn.metrics import confusion_matrix, classification_report
 import matplotlib.pyplot as plt
@@ -10,55 +10,132 @@ import matplotlib.pyplot as plt
 # Constants
 IMG_SIZE = 128
 BATCH_SIZE = 32
-EPOCHS = 20
+EPOCHS = 30
 FOLDS = 5
 SEED = 42
 
 # Preprocessing Functions
-def preprocess_image(image_path):
+def preprocess_image(image_path, output_path=None):
     try:
+        # Load image in grayscale
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError(f"Image at {image_path} could not be loaded.")
+        
+        # Crop the bottom half of the image
+        height, width = img.shape
+        bottom_half = img[height // 2:, :]
 
-        img = cv2.GaussianBlur(img, (5, 5), 0)
-        img = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(bottom_half, (5, 5), 0)
 
-        contours, _ = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Thresholding to create a binary image
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Find contours
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # If contours are found, correct perspective if needed
         if contours:
             largest_contour = max(contours, key=cv2.contourArea)
-            rect = cv2.minAreaRect(largest_contour)
-            angle = rect[-1]
-            if angle < -45:
-                angle += 90
-            M = cv2.getRotationMatrix2D((img.shape[1] // 2, img.shape[0] // 2), angle, 1.0)
-            img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+            epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+            approx = cv2.approxPolyDP(largest_contour, epsilon, True)
 
-        bottom_section = img[img.shape[0] // 2:]
-        resized_img = cv2.resize(bottom_section, (IMG_SIZE, IMG_SIZE))
+            if len(approx) == 4:  # If a quadrilateral is detected
+                # Define points for perspective transform
+                pts = approx.reshape(4, 2)
+                rect = np.zeros((4, 2), dtype="float32")
+
+                # Sort points to order: top-left, top-right, bottom-right, bottom-left
+                s = pts.sum(axis=1)
+                rect[0] = pts[np.argmin(s)]
+                rect[2] = pts[np.argmax(s)]
+
+                diff = np.diff(pts, axis=1)
+                rect[1] = pts[np.argmin(diff)]
+                rect[3] = pts[np.argmax(diff)]
+
+                # Calculate the max width and height of the new image
+                (tl, tr, br, bl) = rect
+                widthA = np.linalg.norm(br - bl)
+                widthB = np.linalg.norm(tr - tl)
+                maxWidth = max(int(widthA), int(widthB))
+
+                heightA = np.linalg.norm(tr - br)
+                heightB = np.linalg.norm(tl - bl)
+                maxHeight = max(int(heightA), int(heightB))
+
+                # Perspective transform
+                dst = np.array([
+                    [0, 0],
+                    [maxWidth - 1, 0],
+                    [maxWidth - 1, maxHeight - 1],
+                    [0, maxHeight - 1]], dtype="float32")
+
+                M = cv2.getPerspectiveTransform(rect, dst)
+                warped = cv2.warpPerspective(binary, M, (maxWidth, maxHeight))
+
+                # Resize the perspective-corrected image
+                resized_img = cv2.resize(warped, (IMG_SIZE, IMG_SIZE))
+            else:
+                # If no quadrilateral is detected, use the cropped bottom half
+                resized_img = cv2.resize(binary, (IMG_SIZE, IMG_SIZE))
+        else:
+            # If no contours are found, use the cropped bottom half
+            resized_img = cv2.resize(binary, (IMG_SIZE, IMG_SIZE))
+        
+        # Normalize pixel values
         normalized_img = resized_img / 255.0
+
+        if output_path:
+            # Save the preprocessed image
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            cv2.imwrite(output_path, (normalized_img * 255).astype(np.uint8))
+
+            # # Display the preprocessed image
+            # plt.imshow(normalized_img, cmap='gray')
+            # plt.title(f"Preprocessed: {os.path.basename(image_path)}")
+            # plt.axis('off')
+            # plt.show()
+
         return normalized_img
 
     except Exception as e:
         print(f"Error processing {image_path}: {e}")
         return None
 
-
-def preprocess_directory(input_dir):
+def preprocess_dataset(input_dir, output_dir=None):
     images, labels = [], []
-    class_names = os.listdir(input_dir)
+    phases = ["train", "validation"] if output_dir else ["."]
+    base_dir = input_dir
 
-    for label, class_name in enumerate(class_names):
-        class_path = os.path.join(input_dir, class_name)
-        if not os.path.isdir(class_path):
-            continue
+    for phase in phases:
+        phase_input_dir = os.path.join(base_dir, phase) if output_dir else base_dir
+        phase_output_dir = os.path.join(output_dir, phase) if output_dir else None
 
-        for img_name in os.listdir(class_path):
-            img_path = os.path.join(class_path, img_name)
-            preprocessed_img = preprocess_image(img_path)
-            if preprocessed_img is not None:
-                images.append(preprocessed_img)
-                labels.append(label)
+        for label, class_name in enumerate(os.listdir(phase_input_dir)):
+            class_input_dir = os.path.join(phase_input_dir, class_name)
+            class_output_dir = os.path.join(phase_output_dir, class_name) if phase_output_dir else None
+
+            if not os.path.isdir(class_input_dir):
+                continue
+
+            for img_name in os.listdir(class_input_dir):
+                img_path = os.path.join(class_input_dir, img_name)
+
+                # Skip non-image files
+                valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
+                if not img_name.lower().endswith(valid_extensions):
+                    print(f"Skipping non-image file: {img_name}")
+                    continue
+
+                output_path = os.path.join(class_output_dir, img_name) if class_output_dir else None
+                preprocessed_img = preprocess_image(img_path, output_path)
+                if preprocessed_img is not None:
+                    images.append(preprocessed_img)
+                    labels.append(label)
+                else:
+                    print(f"Failed to preprocess: {img_path}")
 
     return np.array(images), np.array(labels)
 
@@ -120,8 +197,11 @@ def train_and_evaluate(images, labels):
         fold_metrics.append(val_accuracy)
 
         print(f"Fold {fold + 1} - Validation Accuracy: {val_accuracy:.4f}")
-        model.save("try2.h5")
-
+        
+        # Plot training history for this fold
+        plot_history(history)
+        
+    model.save("try2.h5")
     print("\nCross-validation Accuracy: {:.4f} (+/- {:.4f})".format(np.mean(fold_metrics), np.std(fold_metrics)))
 
 # Visualization Functions
@@ -143,14 +223,15 @@ def plot_history(history):
     plt.show()
 
 # Main Function
-def main(input_dir):
-    images, labels = preprocess_directory(input_dir)
+def main(input_dir, output_dir=None):
+    images, labels = preprocess_dataset(input_dir, output_dir)
     if images.size == 0 or labels.size == 0:
         print("No valid data found. Exiting.")
         return
 
+    print(f"Preprocessed {len(images)} images.")
     images = images[..., np.newaxis]  # Add channel dimension
     train_and_evaluate(images, labels)
 
 if __name__ == "__main__":
-    main("/Users/arjun/Documents/CDIT/model/data")
+    main("data", "data_preprocessed")
