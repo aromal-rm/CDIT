@@ -91,9 +91,9 @@ normalization_layer = tf.keras.layers.Rescaling(1.0 / 255)
 train_data = train_data.map(lambda x, y: (normalization_layer(x), y))
 validation_data = validation_data.map(lambda x, y: (normalization_layer(x), y))
 
-# Create a simple CNN model
+# Create a simple CNN model for single-class classification
 model = Sequential([
-    Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 3)),
+    Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 1)),  # Change input shape to (128, 128, 1)
     MaxPooling2D((2, 2)),
     Conv2D(64, (3, 3), activation='relu'),
     MaxPooling2D((2, 2)),
@@ -102,13 +102,13 @@ model = Sequential([
     Flatten(),
     Dense(128, activation='relu'),
     Dropout(0.5),
-    Dense(1, activation='sigmoid')  # Binary classification
+    Dense(1, activation='sigmoid')  # Single output for probability of acceptance
 ])
 
 # Compile the model
 model.compile(
     optimizer='adam',
-    loss='binary_crossentropy',
+    loss='binary_crossentropy',  # Use binary crossentropy for single-class classification
     metrics=['accuracy']
 )
 
